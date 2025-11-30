@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AssemblyName>CalibrationTool</AssemblyName>
+    <RootNamespace>CalibrationTool</RootNamespace>
+    <Version>2.0.0</Version>
+    <Authors>Your Name</Authors>
+    <Description>ADC校准工具 - 多项式拟合与串口下载</Description>
+    
+    <!-- 生成exe文件 -->
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    
+    <!-- 高DPI支持 -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <FormsHighDpiMode>PerMonitorV2</FormsHighDpiMode>
+    
+    <!-- Windows应用清单 -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- MathNet.Numerics 数学计算库 -->
+    <PackageReference Include="MathNet.Numerics" Version="5.0.*" />
+    
+    <!-- 串口通信 -->
+    <PackageReference Include="System.IO.Ports" Version="8.0.*" />
+    
+    <!-- WMI查询 (获取串口友好名称) -->
+    <PackageReference Include="System.Management" Version="8.0.*" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,23 @@
+# Build results
+bin/
+obj/
+publish/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.cache
+
+# NuGet
+packages/
+*.nupkg
+
+# IDE
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
