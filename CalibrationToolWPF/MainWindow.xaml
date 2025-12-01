@@ -25,10 +25,12 @@
         </Style>
     </Window.Resources>
 
-    <!-- DialogHost 包装整个内容 -->
-    <materialDesign:DialogHost Identifier="RootDialog" 
-                               DialogTheme="Inherit"
-                               CloseOnClickAway="True">
+    <!-- 根Grid包含DialogHost和Toast容器 -->
+    <Grid>
+        <!-- DialogHost 包装整个内容 -->
+        <materialDesign:DialogHost Identifier="RootDialog" 
+                                   DialogTheme="Inherit"
+                                   CloseOnClickAway="True">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="*"/>
@@ -669,4 +671,18 @@
             </Border>
         </Grid>
     </materialDesign:DialogHost>
+    
+    <!-- Toast 消息容器 - 位于最顶层 -->
+    <ItemsControl x:Name="ToastContainer" 
+                  HorizontalAlignment="Center" 
+                  VerticalAlignment="Top"
+                  Margin="0,24,0,0"
+                  Panel.ZIndex="9999">
+        <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+                <StackPanel Orientation="Vertical"/>
+            </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+    </ItemsControl>
+</Grid>
 </Window>

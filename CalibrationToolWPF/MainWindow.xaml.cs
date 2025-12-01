@@ -8,6 +8,8 @@ using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Threading;
 using MaterialDesignThemes.Wpf;
 using MathNet.Numerics.LinearAlgebra;
 using MathNet.Numerics.LinearAlgebra.Double;
@@ -242,7 +244,6 @@ public partial class MainWindow : Window
             var ports = SerialPort.GetPortNames();
             if (ports.Length == 0)
             {
-                //ShowWarning("未检测到串口");
                 return;
             }
 
@@ -316,7 +317,7 @@ public partial class MainWindow : Window
             if (_serial == null) return;
 
             _serial.PortName = portName;
-            _serial.BaudRate = int.Parse(((System.Windows.Controls.ComboBoxItem)cbBaudRate.SelectedItem).Content.ToString()!);
+            _serial.BaudRate = int.Parse(((ComboBoxItem)cbBaudRate.SelectedItem).Content.ToString()!);
             _serial.DataBits = 8;
             _serial.Parity = Parity.None;
             _serial.StopBits = StopBits.One;
@@ -362,12 +363,13 @@ public partial class MainWindow : Window
         
         txtConnect.Text = connected ? "断开" : "连接";
         iconConnect.Kind = connected 
-            ? PackIconKind.LinkOff 
-            : PackIconKind.Link;
+            ? PackIconKind.LanDisconnect 
+            : PackIconKind.LanConnect;
         
         btnConnect.Background = connected 
             ? new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F5222D"))
-            : new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1890FF"));
+            : new SolidColorBrush((Color)ColorConverter.ConvertFromString("#52C41A"));
+        btnConnect.BorderBrush = btnConnect.Background;
 
         statusIndicator.Fill = connected 
             ? new SolidColorBrush((Color)ColorConverter.ConvertFromString("#52C41A"))
@@ -381,6 +383,7 @@ public partial class MainWindow : Window
         btnReadChannels.IsEnabled = connected;
         btnSendFormula.IsEnabled = connected;
         btnReadCoeffs.IsEnabled = connected;
+        cbChannel.IsEnabled = connected;
     }
 
     private void BtnReadChannels_Click(object sender, RoutedEventArgs e)
@@ -458,6 +461,18 @@ public partial class MainWindow : Window
         }
     }
 
+    private void BtnUseFormula_Click(object sender, RoutedEventArgs e)
+    {
+        if (_coefficients == null || _coefficients.Length == 0)
+        {
+            ShowWarning("请先进行拟合计算");
+            return;
+        }
+
+        txtFormula.Text = "y = " + FormatFormula(_coefficients);
+        ShowSuccess("已填入拟合公式");
+    }
+
     private void BtnReadCoeffs_Click(object sender, RoutedEventArgs e)
     {
         if (!_isConnected)
@@ -473,18 +488,6 @@ public partial class MainWindow : Window
         }
 
         ShowWarning("此功能需要设备端支持");
-    }
-
-    private void BtnUseFormula_Click(object sender, RoutedEventArgs e)
-    {
-        if (_coefficients == null || _coefficients.Length == 0)
-        {
-            ShowWarning("请先进行拟合计算");
-            return;
-        }
-
-        txtFormula.Text = "y = " + FormatFormula(_coefficients);
-        ShowSuccess("已填入拟合公式");
     }
 
     private void BtnClearLog_Click(object sender, RoutedEventArgs e)
@@ -698,96 +701,158 @@ public partial class MainWindow : Window
             ? PackIconKind.CheckCircle 
             : PackIconKind.AlertCircle;
     }
+    #endregion
 
-    private static void ShowSuccess(string msg) => 
-        ShowDialog(msg, "成功", PackIconKind.CheckCircle, "#52C41A");
+    #region Toast Notification System
     
-    private static void ShowWarning(string msg) => 
-        ShowDialog(msg, "提示", PackIconKind.AlertCircle, "#FAAD14");
-    
-    private static void ShowError(string msg) => 
-        ShowDialog(msg, "错误", PackIconKind.CloseCircle, "#F5222D");
-
-    private static async void ShowDialog(string message, string title, PackIconKind icon, string colorHex)
+    /// <summary>
+    /// Toast消息类型
+    /// </summary>
+    private enum ToastType
     {
-        var color = (Color)ColorConverter.ConvertFromString(colorHex);
-        
-        var dialogContent = new StackPanel
+        Success,
+        Warning,
+        Error,
+        Info
+    }
+
+    /// <summary>
+    /// 显示成功提示
+    /// </summary>
+    private void ShowSuccess(string msg) => ShowToast(msg, ToastType.Success);
+    
+    /// <summary>
+    /// 显示警告提示
+    /// </summary>
+    private void ShowWarning(string msg) => ShowToast(msg, ToastType.Warning);
+    
+    /// <summary>
+    /// 显示错误提示
+    /// </summary>
+    private void ShowError(string msg) => ShowToast(msg, ToastType.Error);
+
+    /// <summary>
+    /// 显示Toast气泡提示（AntDesign风格）
+    /// </summary>
+    private void ShowToast(string message, ToastType type, int durationMs = 3000)
+    {
+        if (!Dispatcher.CheckAccess())
         {
-            Width = 320,
-            Margin = new Thickness(24)
+            Dispatcher.Invoke(() => ShowToast(message, type, durationMs));
+            return;
+        }
+
+        // 获取类型对应的颜色和图标
+        var (iconKind, bgColor, iconColor) = type switch
+        {
+            ToastType.Success => (PackIconKind.CheckCircle, "#F6FFED", "#52C41A"),
+            ToastType.Warning => (PackIconKind.AlertCircle, "#FFFBE6", "#FAAD14"),
+            ToastType.Error => (PackIconKind.CloseCircle, "#FFF2F0", "#FF4D4F"),
+            ToastType.Info => (PackIconKind.InformationOutline, "#E6F7FF", "#1890FF"),
+            _ => (PackIconKind.InformationOutline, "#E6F7FF", "#1890FF")
+        };
+
+        // 创建Toast容器
+        var toastBorder = new Border
+        {
+            Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(bgColor)!),
+            BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(iconColor)!),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(16, 12, 16, 12),
+            Margin = new Thickness(0, 0, 0, 8),
+            Opacity = 0,
+            RenderTransform = new TranslateTransform(0, -20),
+            Effect = new System.Windows.Media.Effects.DropShadowEffect
+            {
+                BlurRadius = 12,
+                ShadowDepth = 4,
+                Opacity = 0.15,
+                Direction = 270
+            },
+            MinWidth = 200,
+            MaxWidth = 400
+        };
+
+        // 创建内容面板
+        var contentPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal
         };
 
         // 图标
-        var iconElement = new PackIcon
+        var icon = new PackIcon
         {
-            Kind = icon,
-            Width = 48,
-            Height = 48,
-            Foreground = new SolidColorBrush(color),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 16)
+            Kind = iconKind,
+            Width = 20,
+            Height = 20,
+            Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(iconColor)!),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 10, 0)
         };
 
-        // 标题
-        var titleBlock = new TextBlock
-        {
-            Text = title,
-            FontSize = 18,
-            FontWeight = FontWeights.SemiBold,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 8),
-            Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#262626"))
-        };
-
-        // 消息内容
-        var messageBlock = new TextBlock
+        // 消息文本
+        var messageText = new TextBlock
         {
             Text = message,
             FontSize = 14,
+            Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#262626")!),
+            VerticalAlignment = VerticalAlignment.Center,
             TextWrapping = TextWrapping.Wrap,
-            TextAlignment = TextAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#8C8C8C")),
-            Margin = new Thickness(0, 0, 0, 24)
+            MaxWidth = 340
         };
 
-        // 确定按钮
-        var button = new Button
+        contentPanel.Children.Add(icon);
+        contentPanel.Children.Add(messageText);
+        toastBorder.Child = contentPanel;
+
+        // 添加到容器
+        ToastContainer.Items.Add(toastBorder);
+
+        // 淡入动画
+        var fadeInOpacity = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(300))
         {
-            Content = "确定",
-            Style = Application.Current.FindResource("MaterialDesignRaisedButton") as Style,
-            Width = 100,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Command = DialogHost.CloseDialogCommand,
-            Background = new SolidColorBrush(color),
-            BorderBrush = new SolidColorBrush(color)
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
         };
-        ButtonAssist.SetCornerRadius(button, new CornerRadius(4));
-
-        dialogContent.Children.Add(iconElement);
-        dialogContent.Children.Add(titleBlock);
-        dialogContent.Children.Add(messageBlock);
-        dialogContent.Children.Add(button);
-
-        // 对话框容器
-        var dialogCard = new Card
+        var slideIn = new DoubleAnimation(-20, 0, TimeSpan.FromMilliseconds(300))
         {
-            Content = dialogContent,
-            UniformCornerRadius = 12,
-            Background = new SolidColorBrush(Colors.White)
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
         };
 
-        try
+        toastBorder.BeginAnimation(OpacityProperty, fadeInOpacity);
+        ((TranslateTransform)toastBorder.RenderTransform).BeginAnimation(TranslateTransform.YProperty, slideIn);
+
+        // 设置自动消失定时器
+        var timer = new DispatcherTimer
         {
-            await DialogHost.Show(dialogCard, DialogHostId);
-        }
-        catch
+            Interval = TimeSpan.FromMilliseconds(durationMs)
+        };
+        timer.Tick += (s, args) =>
         {
-            // Fallback to MessageBox if dialog host not available
-            MessageBox.Show(message, title, MessageBoxButton.OK);
-        }
+            timer.Stop();
+            
+            // 淡出动画
+            var fadeOutOpacity = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(300))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
+            };
+            var slideOut = new DoubleAnimation(0, -20, TimeSpan.FromMilliseconds(300))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
+            };
+
+            fadeOutOpacity.Completed += (sender, e) =>
+            {
+                ToastContainer.Items.Remove(toastBorder);
+            };
+
+            toastBorder.BeginAnimation(OpacityProperty, fadeOutOpacity);
+            ((TranslateTransform)toastBorder.RenderTransform).BeginAnimation(TranslateTransform.YProperty, slideOut);
+        };
+        timer.Start();
     }
+
+    #endregion
 
     protected override void OnClosing(CancelEventArgs e)
     {
@@ -797,7 +862,6 @@ public partial class MainWindow : Window
         _rxTimer?.Dispose();
         _serial?.Dispose();
     }
-    #endregion
 }
 
 #region Data Models
