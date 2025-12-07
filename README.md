@@ -45,7 +45,7 @@
 ## 📁 项目结构
 
 ```
-ADC_Calibration_V3/
+ADC_Calibration_V2/
 │
 ├── mcu/                            # MCU 端代码 (C 语言)
 │   ├── CH_Calib.h                  # 校准系统核心头文件
@@ -53,7 +53,10 @@ ADC_Calibration_V3/
 │   ├── Calib_Storage.h             # 存储驱动抽象层头文件
 │   ├── Calib_Storage.c             # 存储驱动抽象层实现
 │   ├── Calib_Storage_Port.c        # 驱动移植示例 (多种存储方案)
-│   └── main_example.c              # 使用示例代码
+│   ├── Examples_HAL_StdLib.c       # 详细使用例程
+│   ├── Examples_HAL_StdLib.h       # 详细使用例程头文件
+│   ├── main_example.c              # 使用示例代码
+│   └── MCU_Calib_Manual.md         # 详细使用例程 & API说明
 │
 ├── pc/                             # PC 端代码 (C# WPF)
 │   ├── CalibrationTool.sln         # Visual Studio 解决方案
