@@ -32,6 +32,8 @@ public partial class MainWindow : Window
     private SerialPort? _serial;
     private System.Timers.Timer? _rxTimer;
     private readonly StringBuilder _rxBuffer = new();
+    private readonly List<byte> _rxBinaryBuffer = new();  // 二进制数据缓冲区
+    private bool _expectBinaryResponse;                    // 是否期待二进制响应
     private readonly Dictionary<string, string> _channelMap = new();
     private readonly Dictionary<string, string> _portMap = new();
     private double[]? _coefficients;
@@ -487,7 +489,41 @@ public partial class MainWindow : Window
             return;
         }
 
-        ShowWarning("此功能需要设备端支持");
+        try
+        {
+            string chName = cbChannel.SelectedItem.ToString()!;
+            if (!_channelMap.TryGetValue(chName, out string? chIdStr) || !byte.TryParse(chIdStr, out byte chId))
+            {
+                ShowError("通道ID无效");
+                return;
+            }
+
+            // 清空缓冲区，设置期待二进制响应
+            lock (_lockObj)
+            {
+                _rxBuffer.Clear();
+                _rxBinaryBuffer.Clear();
+                _expectBinaryResponse = true;
+            }
+
+            // 构建读取系数命令: AA + "RdCoef" + ch_id
+            byte[] cmd = new byte[8];
+            cmd[0] = FrameHeader;    // 0xAA
+            cmd[1] = (byte)'R';
+            cmd[2] = (byte)'d';
+            cmd[3] = (byte)'C';
+            cmd[4] = (byte)'o';
+            cmd[5] = (byte)'e';
+            cmd[6] = (byte)'f';
+            cmd[7] = chId;
+
+            _serial?.Write(cmd, 0, cmd.Length);
+            Log($"TX: 读取CH{chId}系数命令");
+        }
+        catch (Exception ex)
+        {
+            ShowError("发送失败: " + ex.Message);
+        }
     }
 
     private void BtnClearLog_Click(object sender, RoutedEventArgs e)
@@ -507,7 +543,16 @@ public partial class MainWindow : Window
             
             lock (_lockObj)
             {
-                _rxBuffer.Append(Encoding.UTF8.GetString(buffer));
+                if (_expectBinaryResponse)
+                {
+                    // 二进制模式：存入字节缓冲区
+                    _rxBinaryBuffer.AddRange(buffer);
+                }
+                else
+                {
+                    // 文本模式：存入字符串缓冲区
+                    _rxBuffer.Append(Encoding.UTF8.GetString(buffer));
+                }
             }
             
             _rxTimer?.Stop();
@@ -527,21 +572,42 @@ public partial class MainWindow : Window
         {
             try
             {
-                string data;
+                bool isBinary;
+                string textData = "";
+                byte[] binaryData = Array.Empty<byte>();
+
                 lock (_lockObj)
                 {
-                    data = _rxBuffer.ToString().Trim();
-                    _rxBuffer.Clear();
+                    isBinary = _expectBinaryResponse;
+                    if (isBinary)
+                    {
+                        binaryData = _rxBinaryBuffer.ToArray();
+                        _rxBinaryBuffer.Clear();
+                        _expectBinaryResponse = false;
+                    }
+                    else
+                    {
+                        textData = _rxBuffer.ToString().Trim();
+                        _rxBuffer.Clear();
+                    }
                 }
 
-                if (string.IsNullOrEmpty(data)) return;
-
-                Log($"RX: {data}");
-                
-                if (data.StartsWith("CH:"))
-                    ParseChannels(data);
-                else if (data.StartsWith("OK:"))
-                    ShowSuccess(data);
+                if (isBinary && binaryData.Length > 0)
+                {
+                    // 处理二进制响应 (系数读取)
+                    Log($"RX: [{string.Join(" ", binaryData.Select(b => b.ToString("X2")))}]");
+                    ParseCoefficientsResponse(binaryData);
+                }
+                else if (!string.IsNullOrEmpty(textData))
+                {
+                    // 处理文本响应
+                    Log($"RX: {textData}");
+                    
+                    if (textData.StartsWith("CH:"))
+                        ParseChannels(textData);
+                    else if (textData.StartsWith("OK:"))
+                        ShowSuccess(textData);
+                }
             }
             catch (Exception ex)
             {
@@ -572,46 +638,140 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 解析系数响应帧
+    /// 格式: AA + "Coef" + len + ch_id + coeff_cnt + coeffs[coeff_cnt * 8] + CRC16(2)
+    /// </summary>
+    private void ParseCoefficientsResponse(byte[] data)
+    {
+        try
+        {
+            // 最小帧长度: 1(AA) + 4(Coef) + 1(len) + 1(ch_id) + 1(coeff_cnt) + 8(至少1个系数) + 2(CRC) = 18
+            if (data.Length < 18)
+            {
+                ShowError("响应数据长度不足");
+                return;
+            }
+
+            // 检查帧头
+            if (data[0] != FrameHeader)
+            {
+                ShowError("响应帧头错误");
+                return;
+            }
+
+            // 检查命令字 "Coef"
+            if (data[1] != 'C' || data[2] != 'o' || data[3] != 'e' || data[4] != 'f')
+            {
+                ShowError("响应命令字错误");
+                return;
+            }
+
+            byte frameLen = data[5];
+            if (data.Length < frameLen)
+            {
+                ShowError("响应数据不完整");
+                return;
+            }
+
+            // 验证CRC
+            ushort recvCrc = (ushort)(data[frameLen - 2] | (data[frameLen - 1] << 8));
+            ushort calcCrc = CalcCrc16(data, 1, frameLen - 3);
+            if (recvCrc != calcCrc)
+            {
+                ShowError($"CRC校验失败 (收到:{recvCrc:X4}, 计算:{calcCrc:X4})");
+                return;
+            }
+
+            byte chId = data[6];
+            byte coeffCnt = data[7];
+
+            if (coeffCnt == 0 || coeffCnt > 6)
+            {
+                ShowError($"系数数量无效: {coeffCnt}");
+                return;
+            }
+
+            // 解析系数 (每个系数8字节, double)
+            double[] coeffs = new double[coeffCnt];
+            for (int i = 0; i < coeffCnt; i++)
+            {
+                coeffs[i] = BitConverter.ToDouble(data, 8 + i * 8);
+            }
+
+            // 生成公式字符串并显示
+            string formula = "y = " + FormatFormula(coeffs);
+            txtFormula.Text = formula;
+
+            // 同时更新拟合结果区域
+            _coefficients = coeffs;
+
+            Log($"成功读取CH{chId}系数: [{string.Join(", ", coeffs.Select(c => c.ToString("E4")))}]");
+            ShowSuccess($"已读取通道{chId}的{coeffCnt}个系数");
+        }
+        catch (Exception ex)
+        {
+            ShowError($"解析系数失败: {ex.Message}");
+            Log($"解析异常: {ex}");
+        }
+    }
+
     private static double[]? ParseFormula(string formula)
     {
         if (string.IsNullOrWhiteSpace(formula)) return null;
 
+        // 移除 "y = " 前缀
         formula = Regex.Replace(formula, @"^\s*y\s*=\s*", "", RegexOptions.IgnoreCase);
-        formula = formula.Replace(" ", "").Replace("-", "+-");
+        formula = formula.Replace(" ", "");
 
         var coeffDict = new Dictionary<int, double>();
         int maxPower = 0;
 
-        foreach (var term in formula.Split('+', StringSplitOptions.RemoveEmptyEntries))
+        // 使用正则直接匹配所有多项式项（包括科学计数法）
+        // 匹配模式: 可选符号 + 可选数字(含科学计数法) + 可选的 *x^n
+        // 支持: -3.6E-05*x^2, 0.37*x, -120.6, +x, -x^2 等格式
+        string pattern = @"([+-]?(?:\d+\.?\d*|\d*\.\d+)?(?:[Ee][+-]?\d+)?)\*?([xX](?:\^(\d+))?)?";
+        
+        var matches = Regex.Matches(formula, pattern);
+        
+        foreach (Match match in matches)
         {
-            if (string.IsNullOrEmpty(term)) continue;
+            if (!match.Success || string.IsNullOrEmpty(match.Value)) continue;
+            
+            string coeffStr = match.Groups[1].Value;
+            bool hasX = match.Groups[2].Success && !string.IsNullOrEmpty(match.Groups[2].Value);
+            
+            // 跳过空匹配或只有符号但没有x的情况
+            if (string.IsNullOrEmpty(coeffStr) && !hasX) continue;
+            if ((coeffStr == "+" || coeffStr == "-") && !hasX) continue;
+            
+            // 处理只有符号的情况 (如 +x, -x, +, -)
+            if (string.IsNullOrEmpty(coeffStr))
+                coeffStr = "1";
+            else if (coeffStr == "+" || coeffStr == "-")
+                coeffStr += "1";
+            
+            if (!double.TryParse(coeffStr, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out double coeff))
+                continue;
 
-            double coeff;
             int power = 0;
-
-            if (term.Contains('x', StringComparison.OrdinalIgnoreCase))
+            if (match.Groups[2].Success && !string.IsNullOrEmpty(match.Groups[2].Value))
             {
-                var match = Regex.Match(term, @"^([+-]?\d*\.?\d*(?:[Ee][+-]?\d+)?)\*?[xX](?:\^(\d+))?");
-                if (match.Success)
+                // 有 x 项
+                power = 1;
+                if (match.Groups[3].Success && !string.IsNullOrEmpty(match.Groups[3].Value))
                 {
-                    string coeffStr = match.Groups[1].Value;
-                    if (string.IsNullOrEmpty(coeffStr) || coeffStr == "+" || coeffStr == "-")
-                        coeffStr += "1";
-                    coeff = double.Parse(coeffStr);
-                    power = string.IsNullOrEmpty(match.Groups[2].Value) ? 1 : int.Parse(match.Groups[2].Value);
+                    // 有幂次
+                    power = int.Parse(match.Groups[3].Value);
                 }
-                else continue;
-            }
-            else
-            {
-                if (!double.TryParse(term, out coeff)) continue;
             }
 
             if (coeffDict.ContainsKey(power))
                 coeffDict[power] += coeff;
             else
                 coeffDict[power] = coeff;
-            
+
             if (power > maxPower) maxPower = power;
         }
 
@@ -620,7 +780,7 @@ public partial class MainWindow : Window
         var result = new double[maxPower + 1];
         for (int i = 0; i <= maxPower; i++)
             result[i] = coeffDict.TryGetValue(i, out double value) ? value : 0;
-        
+
         return result;
     }
 
