@@ -39,6 +39,7 @@ public partial class MainWindow : Window
     private double[]? _coefficients;
     private bool _isConnected;
     private readonly object _lockObj = new();
+    private Encoding _serialEncoding = Encoding.UTF8;     // 串口文本编码
 
     // Data collections for DataGrids
     public ObservableCollection<DataItem> AdcItems { get; } = new();
@@ -49,6 +50,9 @@ public partial class MainWindow : Window
     #region Constructor
     public MainWindow()
     {
+        // 注册GB2312编码提供程序
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        
         InitializeComponent();
         
         // Bind data sources
@@ -531,6 +535,20 @@ public partial class MainWindow : Window
         txtLog.Text = "";
     }
 
+    private void CbEncoding_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // 防止初始化时触发
+        if (!IsLoaded || cbEncoding?.SelectedItem is not ComboBoxItem item) return;
+        
+        string encoding = item.Content?.ToString() ?? "UTF-8";
+        _serialEncoding = encoding switch
+        {
+            "GB2312" => Encoding.GetEncoding("GB2312"),
+            _ => Encoding.UTF8
+        };
+        Log($"编码已切换为: {encoding}");
+    }
+
     private void Serial_DataReceived(object sender, SerialDataReceivedEventArgs e)
     {
         try
@@ -550,8 +568,8 @@ public partial class MainWindow : Window
                 }
                 else
                 {
-                    // 文本模式：存入字符串缓冲区
-                    _rxBuffer.Append(Encoding.UTF8.GetString(buffer));
+                    // 文本模式：使用选定的编码存入字符串缓冲区
+                    _rxBuffer.Append(_serialEncoding.GetString(buffer));
                 }
             }
             
@@ -699,15 +717,19 @@ public partial class MainWindow : Window
                 coeffs[i] = BitConverter.ToDouble(data, 8 + i * 8);
             }
 
-            // 生成公式字符串并显示
+            // 生成公式字符串
             string formula = "y = " + FormatFormula(coeffs);
+            
+            // 更新串口下载页的公式输入框
             txtFormula.Text = formula;
 
-            // 同时更新拟合结果区域
+            // 同时更新拟合结果区域（多项式拟合页），使用户可以进行模拟计算
             _coefficients = coeffs;
+            txtResult.Text = formula;
+            txtResult.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#262626"));
 
             Log($"成功读取CH{chId}系数: [{string.Join(", ", coeffs.Select(c => c.ToString("E4")))}]");
-            ShowSuccess($"已读取通道{chId}的{coeffCnt}个系数");
+            ShowSuccess($"已读取通道{chId}的{coeffCnt}个系数，可在\"多项式拟合\"页进行模拟计算");
         }
         catch (Exception ex)
         {

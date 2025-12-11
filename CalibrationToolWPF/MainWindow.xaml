@@ -512,12 +512,30 @@
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Style="{StaticResource CardTitleStyle}">
                                     <materialDesign:PackIcon Kind="Console" VerticalAlignment="Center" Margin="0,0,8,0"/>
                                     通信日志
                                     </TextBlock>
-                                    <Button x:Name="btnClearLog" Grid.Column="1"
+                                    
+                                    <!-- 编码选择 -->
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0">
+                                        <TextBlock Text="编码:" VerticalAlignment="Center" Margin="0,0,4,0" 
+                                                   Foreground="{StaticResource TextSecondaryBrush}" FontSize="12"/>
+                                        <ComboBox x:Name="cbEncoding" Width="85" Height="28"
+                                              Style="{StaticResource MaterialDesignOutlinedComboBox}"
+                                              SelectedIndex="0"
+                                              FontSize="12"
+                                              Padding="8,2"
+                                              materialDesign:HintAssist.Hint="编码"
+                                              SelectionChanged="CbEncoding_SelectionChanged">
+                                            <ComboBoxItem Content="UTF-8"/>
+                                            <ComboBoxItem Content="GB2312"/>
+                                        </ComboBox>
+                                    </StackPanel>
+                                    
+                                    <Button x:Name="btnClearLog" Grid.Column="2"
                                         Style="{StaticResource MaterialDesignFlatButton}"
                                         Click="BtnClearLog_Click">
                                         <StackPanel Orientation="Horizontal">
